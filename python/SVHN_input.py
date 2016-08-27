@@ -1,4 +1,6 @@
-"""Routine for decoding the SVHN binary file format."""
+"""
+Routine for decoding the SVHN binary file format.
+"""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -9,6 +11,7 @@ from six.moves import xrange
 import tensorflow as tf
 from scipy.io import loadmat
 import numpy as np
+from random import shuffle
 
 # Process images of this size. Note that this differs from the original SVHN
 # image size of 32 x 32. If one alters this number, then the entire model
@@ -42,7 +45,7 @@ def convert_dataset(data_dir, batch_dir):
     """
 
     # Maximum batch file size.
-    BATCH_FILE_SIZE = 30
+    batch_file_size = 30
 
     # Load train and test dataset from mat files
     train = loadmat(os.path.join(data_dir, 'train_32x32.mat'))
@@ -67,7 +70,7 @@ def convert_dataset(data_dir, batch_dir):
     idx = 1
     batch_f = open(os.path.join(batch_directory, 'data_batch_%d.bin' % idx), "wb")
     for sample in range(no_train_examples):
-        if os.path.getsize(batch_f.name) > BATCH_FILE_SIZE * (1024 ** 2):
+        if os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
             batch_f.close()
             idx += 1
             batch_f = open(os.path.join(batch_directory, 'data_batch_%d.bin' % idx), "wb")
@@ -212,12 +215,43 @@ def distorted_inputs(data_dir, batch_size):
     # Randomly crop a [height, width] section of the image.
     distorted_image = tf.random_crop(reshaped_image, [height, width, 3])
 
-    # Randomly flip the image horizontally.
-    #distorted_image = tf.image.random_flip_left_right(distorted_image)
+    def rand_bright(img):
+        """
+        Randomly adjust the brightness of image.
+        :param img: image
+        :return:
+        """
+        return tf.image.random_brightness(img, max_delta=63)
 
-    # Because these operations are not commutative, consider randomizing the order their operation.
-    #distorted_image = tf.image.random_brightness(distorted_image, max_delta=63)
-    #distorted_image = tf.image.random_contrast(distorted_image, lower=0.2, upper=1.8)
+    def rand_contr(img):
+        """
+        Randomly adjust the contrast of image.
+        :param img: image
+        :return:
+        """
+        return tf.image.random_contrast(img, lower=0.2, upper=1.8)
+
+    def rand_sat(img):
+        """
+        Randomly adjust the saturation of image.
+        :param img: image
+        :return:
+        """
+        return tf.image.random_saturation(img, lower=0.2, upper=1.8)
+
+    def rand_hue(img):
+        """
+        Randomly adjust the hue of image.
+        :param img: image
+        :return:
+        """
+        return tf.image.random_hue(img, max_delta=0.5)
+
+    # Randomize the order of not commutative operations
+    ops_list = [rand_bright, rand_contr, rand_sat, rand_hue]
+    shuffle(ops_list)
+    for op in ops_list:
+        distorted_image = op(distorted_image)
 
     # Subtract off the mean and divide by the variance of the pixels.
     float_image = tf.image.per_image_whitening(distorted_image)
