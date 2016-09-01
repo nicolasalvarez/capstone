@@ -1,5 +1,7 @@
+# coding=utf-8
+
 """
-Routine for decoding the SVHN binary file format.
+Routine for convert and decode the DDDM dataset.
 """
 
 from __future__ import absolute_import
@@ -7,128 +9,161 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-from six.moves import xrange
 import tensorflow as tf
-from scipy.io import loadmat
 import numpy as np
-from random import shuffle
+import pandas as pd
+import sklearn.utils
+import random
+from six.moves import xrange
+from PIL import Image
 
-# Process images of this size. Note that this differs from the original SVHN
-# image size of 32 x 32. If one alters this number, then the entire model
-# architecture will change and any model would need to be retrained.
-IMAGE_SIZE = 24
+# Original image size
+ORIG_WIDTH = 640
+ORIG_HEIGHT = 480
 
-# Global constants describing the SVHN data set.
+# Process images of this size. 100x75 or 50x38??
+HEIGHT = 38
+WIDTH = 50
+DEPTH = 3
+
+# Global constants describing the DDDM data set.
 NUM_CLASSES = 10
-NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 73257
-NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 26032
-NO_BATCH_FILES = 8
+NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 17000
+NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 2000
+NUM_EXAMPLES_FOR_TEST = 79726  # 79726
+NO_BATCH_FILES = 4
+
+# Fraction of dataset for validation
+VAL_SET_FRACTION = 0.2
+
+
+def resize_img(img_path, width, height):
+    """
+    Resize image to new_width and new_height using Bicubic algorithm.
+    :param img_path: path to the image to resize
+    :param width: width
+    :param height: height
+    :raise InvalidImageSize if image size is not equal to (ORIG_WIDTH, ORIG_HEIGHT)
+    :return: image resized
+    """
+    img = Image.open(img_path)
+    # Resize original images. Discard images with wrong size.
+    if img.size != (ORIG_WIDTH, ORIG_HEIGHT):
+        raise ValueError('InvalidImageSize')
+    return img.resize((width, height), resample=Image.BICUBIC)
+
 
 def convert_dataset(data_dir, batch_dir):
     """
-    Converts the dataset from .mat files to binary files called data_batch_1.bin, data_batch_2.bin, ...,
-    as well as test_batch.bin. Binary files are written in "data_dir/batch_dir" directory.
+    Converts the dataset from original files to binary files called data_batch_1.bin, data_batch_2.bin, ...,
+    as well as val_batch.bin. Binary files are written in "data_dir/batch_dir" directory.
 
     Each of these files is formatted as follows:
-    <1 x label><3072 x pixel>
+    <1 x label><height*width*depth x pixel>
     ...
-    <1 x label><3072 x pixel>
+    <1 x label><height*width*depth x pixel>
 
-    The first byte is the label of the first image, which is a number in the range 0-9. The next 3072 bytes are the
-    values of the pixels of the image. The first 1024 bytes are the red channel values, the next 1024 the green,
-    and the final 1024 the blue. The values are stored in row-major order, so the first 32 bytes are the red channel
-    values of the first row of the image.
+    The first byte is the label of the first image, which is a number in the range 0-9. The next height*width*depth
+    bytes are the values of the pixels of the image. The values are stored in row-major order.
 
-    :param data_dir: Path to the SVHN data directory.
+    The file test_batch.bin does not have label. Instead, it has a image number of 32 bits.
+
+    :param data_dir: Path to the DDDM data directory.
     :param batch_dir: Batch data directory name.
     :return: None
     """
 
-    # Maximum batch file size.
+    # Maximum batch file size in MB.
     batch_file_size = 30
 
-    # Load train and test dataset from mat files
-    train = loadmat(os.path.join(data_dir, 'train_32x32.mat'))
-    test = loadmat(os.path.join(data_dir, 'test_32x32.mat'))
-
-    print("Keys: Train =",train.keys(), "Test =", test.keys())
-    print("X Shape: Train =",train['X'].shape, "Test =", test['X'].shape)
-    print("Y Shape: Train =",train['y'].shape, "Test =", test['y'].shape)
-
-    # Total examples in datasets
-    no_train_examples = train['X'].shape[3]
-    no_test_examples = test['X'].shape[3]
-
-    X_train = train['X']
-    y_train = train['y']
-    X_test = test['X']
-    y_test = test['y']
-
     batch_directory = os.path.join(data_dir, batch_dir)
+    file_idx = 1
+    base_name = 'data'
+    batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
 
-    # Save train data to bin file
-    idx = 1
-    batch_f = open(os.path.join(batch_directory, 'data_batch_%d.bin' % idx), "wb")
-    for sample in range(no_train_examples):
-        if os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
+    # Convert original images to binary batch files
+    print('Converting training and validation datasets to binary files.')
+
+    # Shuffle dataset before convert it to binary file
+    train_df = pd.read_csv(os.path.join(data_dir, 'driver_imgs_list.csv'))
+    train_df = sklearn.utils.shuffle(train_df).reset_index()
+    for img_idx, row in train_df.iterrows():
+        # Resize image
+        try:
+            img = resize_img(os.path.join(data_dir, 'imgs/train/' + row['classname'] + '/' + row['img']), WIDTH, HEIGHT)
+        except ValueError as x:
+            print(x, row['classname'] + '/' + row['img'])
+            continue
+
+        if img_idx > len(train_df.index) * (1 - VAL_SET_FRACTION) and base_name != 'val':
             batch_f.close()
-            idx += 1
-            batch_f = open(os.path.join(batch_directory, 'data_batch_%d.bin' % idx), "wb")
-        batch_f.write(np.array(y_train[sample] % 10).tobytes())
-        batch_f.write(np.array(X_train[:, :, :, sample]).flatten().tobytes())
+            file_idx = 1
+            base_name = 'val'
+            batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
+        # Save images to batch file with format <1 x label><Height*Width*Depth x pixel>
+        elif os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
+            batch_f.close()
+            file_idx += 1
+            batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
+        # Write image label and image
+        batch_f.write(np.array(int(row['classname'][-1]), dtype=np.uint8).tobytes())
+        batch_f.write(np.array(img).flatten().tobytes())
     batch_f.close()
+    print('Done.')
 
-    # Save test data to bin file
+    print('Converting testing datasets to binary files.')
     batch_f = open(os.path.join(batch_directory, 'test_batch.bin'), "wb")
-    for sample in range(no_test_examples):
-        batch_f.write(np.array(y_test[sample] % 10).tobytes())
-        batch_f.write(np.array(X_test[:, :, :, sample]).flatten().tobytes())
+    test_img_path = os.path.join(data_dir, 'imgs/test')
+
+    for img_file in sorted(os.listdir(test_img_path)):
+        # Resize image
+        try:
+            img = resize_img(os.path.join(os.path.join(test_img_path, img_file)), WIDTH, HEIGHT)
+        except ValueError as x:
+            print(x, img_file)
+            continue
+        # Write image number and image
+        batch_f.write(np.array(int(img_file[4:-4]), dtype=np.int32).tobytes())
+        batch_f.write(np.array(img).flatten().tobytes())
     batch_f.close()
+    print('Done.')
 
 
-def read_SVHN(filename_queue):
-    """Reads and parses examples from SVHN data files.
-
-    Recommendation: if you want N-way read parallelism, call this function
-    N times.  This will give you N independent Readers reading different
-    files & positions within those files, which will give better mixing of
-    examples.
+def read_DDDM_img(filename_queue):
+    """Reads and parses examples from DDDM data files.
 
     Args:
       filename_queue: A queue of strings with the filenames to read from.
 
     Returns:
-      A SVHNRecord object representing a single example.
+      A DDDMRecord object representing a single example.
     """
 
-    class SVHNRecord(object):
+    class DDDMRecord(object):
         """
         Class that represent a single example, with the following fields:
-        height: number of rows in the result (32)
-        width: number of columns in the result (32)
-        depth: number of color channels in the result (3)
+        height: number of rows in the result
+        width: number of columns in the result
+        depth: number of color channels in the result
         key: a scalar string Tensor describing the filename & record number
           for this example.
         label: an int32 Tensor with the label in the range 0..9.
         uint8image: a [height, width, depth] uint8 Tensor with the image data
         """
         pass
-    result = SVHNRecord()
+    result = DDDMRecord()
 
-    # Dimensions of the images in the SVHN dataset.
-    # See http://ufldl.stanford.edu/housenumbers/ for a description of the input format.
+    # Dimensions of the images in the DDDM dataset.
     label_bytes = 1
-    result.height = 32
-    result.width = 32
-    result.depth = 3
+    result.height = HEIGHT
+    result.width = WIDTH
+    result.depth = DEPTH
+
     image_bytes = result.height * result.width * result.depth
-    # Every record consists of a label followed by the image, with a
-    # fixed number of bytes for each.
+    # Every record consists of a label followed by the image, with a fixed number of bytes for each.
     record_bytes = label_bytes + image_bytes
 
-    # Read a record, getting filenames from the filename_queue.  No
-    # header or footer in the SVHN format, so we leave header_bytes
-    # and footer_bytes at their default of 0.
+    # Read a record, getting filenames from the filename_queue.
     reader = tf.FixedLengthRecordReader(record_bytes=record_bytes)
     result.key, value = reader.read(filename_queue)
 
@@ -139,7 +174,7 @@ def read_SVHN(filename_queue):
     result.label = tf.cast(tf.slice(record_bytes, [0], [label_bytes]), tf.int32)
 
     # The remaining bytes after the label represent the image, which we reshape
-    # from [depth * height * width] to [height, width, depth].
+    # from [height * width * depth] to [height, width, depth].
     result.uint8image = tf.reshape(tf.slice(record_bytes, [label_bytes], [image_bytes]),
                                    [result.height, result.width, result.depth])
 
@@ -152,8 +187,7 @@ def _generate_image_and_label_batch(image, label, min_queue_examples, batch_size
     Args:
       image: 3-D Tensor of [height, width, 3] of type.float32.
       label: 1-D Tensor of type.int32
-      min_queue_examples: int32, minimum number of samples to retain
-        in the queue that provides of batches of examples.
+      min_queue_examples: int32, minimum number of samples to retain in the queue that provides of batches of examples.
       batch_size: Number of images per batch.
       shuffle: boolean indicating whether to use a shuffling queue.
 
@@ -185,10 +219,10 @@ def _generate_image_and_label_batch(image, label, min_queue_examples, batch_size
 
 
 def distorted_inputs(data_dir, batch_size):
-    """Construct distorted input for SVHN training using the Reader ops.
+    """Construct distorted input for DDDM training using the Reader ops.
 
     Args:
-      data_dir: Path to the SVHN data directory.
+      data_dir: Path to the DDDM data directory.
       batch_size: Number of images per batch.
 
     Returns:
@@ -204,16 +238,16 @@ def distorted_inputs(data_dir, batch_size):
     filename_queue = tf.train.string_input_producer(filenames)
 
     # Read examples from files in the filename queue.
-    read_input = read_SVHN(filename_queue)
-    reshaped_image = tf.cast(read_input.uint8image, tf.float32)
+    read_input = read_DDDM_img(filename_queue)
+    distorted_image = tf.cast(read_input.uint8image, tf.float32)
 
-    height = IMAGE_SIZE
-    width = IMAGE_SIZE
+    # height = IMAGE_HEIGHT
+    # width = IMAGE_WIDTH
 
     # Image processing for training the network. Note the many random distortions applied to the image.
 
     # Randomly crop a [height, width] section of the image.
-    distorted_image = tf.random_crop(reshaped_image, [height, width, 3])
+    # distorted_image = tf.random_crop(reshaped_image, [height, width, 3])
 
     def rand_bright(img):
         """
@@ -249,7 +283,7 @@ def distorted_inputs(data_dir, batch_size):
 
     # Randomize the order of not commutative operations
     ops_list = [rand_bright, rand_contr, rand_sat, rand_hue]
-    shuffle(ops_list)
+    random.shuffle(ops_list)
     for op in ops_list:
         distorted_image = op(distorted_image)
 
@@ -259,19 +293,18 @@ def distorted_inputs(data_dir, batch_size):
     # Ensure that the random shuffling has good mixing properties.
     min_fraction_of_examples_in_queue = 0.4
     min_queue_examples = int(NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN * min_fraction_of_examples_in_queue)
-    print ('Filling queue with %d SVHN images before starting to train. '
-           'This will take a few minutes.' % min_queue_examples)
+    print ('Filling queue with %d DDDM images before starting to train.' % min_queue_examples)
 
     # Generate a batch of images and labels by building up a queue of examples.
     return _generate_image_and_label_batch(float_image, read_input.label, min_queue_examples, batch_size, shuffle=True)
 
 
 def inputs(eval_data, data_dir, batch_size):
-    """Construct input for SVHN evaluation using the Reader ops.
+    """Construct input for DDDM evaluation using the Reader ops.
 
     Args:
       eval_data: bool, indicating if one should use the train (False) or eval (True) data set.
-      data_dir: Path to the SVHN data directory.
+      data_dir: Path to the DDDM data directory.
       batch_size: Number of images per batch.
 
     Returns:
@@ -282,7 +315,7 @@ def inputs(eval_data, data_dir, batch_size):
         filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_BATCH_FILES)]
         num_examples_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
     else:
-        filenames = [os.path.join(data_dir, 'test_batch.bin')]
+        filenames = [os.path.join(data_dir, 'val_batch_1.bin')]
         num_examples_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
     for f in filenames:
@@ -293,18 +326,18 @@ def inputs(eval_data, data_dir, batch_size):
     filename_queue = tf.train.string_input_producer(filenames)
 
     # Read examples from files in the filename queue.
-    read_input = read_SVHN(filename_queue)
+    read_input = read_DDDM_img(filename_queue)
     reshaped_image = tf.cast(read_input.uint8image, tf.float32)
 
-    height = IMAGE_SIZE
-    width = IMAGE_SIZE
+    # height = IMAGE_SIZE
+    # width = IMAGE_SIZE
 
     # Image processing for evaluation.
     # Crop the central [height, width] of the image.
-    resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, width, height)
+    # resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, width, height)
 
     # Subtract off the mean and divide by the variance of the pixels.
-    float_image = tf.image.per_image_whitening(resized_image)
+    float_image = tf.image.per_image_whitening(reshaped_image)
 
     # Ensure that the random shuffling has good mixing properties.
     min_fraction_of_examples_in_queue = 0.4
