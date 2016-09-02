@@ -89,9 +89,9 @@ def evaluate():
         submission_file = os.path.join(FLAGS.data_dir, FLAGS.submission_file)
         if os.path.exists(submission_file):
             os.remove(submission_file)
-            f = open(submission_file, 'wb')
-            f.write('img,c0,c1,c2,c3,c4,c5,c6,c7,c8,c9\n')
-            f.close()
+        f = open(submission_file, 'wb')
+        f.write('img,c0,c1,c2,c3,c4,c5,c6,c7,c8,c9\n')
+        f.close()
 
         num_iter = int(math.ceil(FLAGS.num_examples / FLAGS.batch_size))
         step = 0
@@ -127,7 +127,7 @@ def evaluate():
         coord.join(threads)
 
 
-def main():
+def main(argv=None):
     """"""
     DDDM.check_and_maybe_convert_dataset()
     evaluate()
