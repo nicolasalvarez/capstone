@@ -21,20 +21,24 @@ from PIL import Image
 ORIG_WIDTH = 640
 ORIG_HEIGHT = 480
 
-# Process images of this size. 100x75 or 50x38??
-HEIGHT = 38
-WIDTH = 50
+# The input layer (that contains the image) should be divisible by 2 many times. Common numbers include 32, 64, 96, ...
+# Possible (HEIGHT, WIDTH): (48, 64) or (72, 96)
+HEIGHT = 48
+WIDTH = 64
+IMG_SIZE = WIDTH  # Final images must be squares.
 DEPTH = 3
-
-# Global constants describing the DDDM data set.
-NUM_CLASSES = 10
-NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 17000
-NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 2000
-NUM_EXAMPLES_FOR_TEST = 79726  # 79726
-NO_BATCH_FILES = 4
 
 # Fraction of dataset for validation
 VAL_SET_FRACTION = 0.2
+
+# Global constants describing the DDDM data set.
+NUM_CLASSES = 10
+TOTAL_EXAMPLES = 22423
+NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = int(TOTAL_EXAMPLES * VAL_SET_FRACTION)
+NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = TOTAL_EXAMPLES - NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
+NUM_EXAMPLES_FOR_TEST = 79726
+NO_TRAIN_BATCH_FILES = 6
+NO_VAL_BATCH_FILES = 2
 
 
 def resize_img(img_path, width, height):
@@ -229,7 +233,7 @@ def distorted_inputs(data_dir, batch_size):
       images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
       labels: Labels. 1D tensor of [batch_size] size.
     """
-    filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_BATCH_FILES)]
+    filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_TRAIN_BATCH_FILES)]
     for f in filenames:
         if not tf.gfile.Exists(f):
             raise ValueError('Failed to find file: ' + f)
@@ -239,15 +243,13 @@ def distorted_inputs(data_dir, batch_size):
 
     # Read examples from files in the filename queue.
     read_input = read_DDDM_img(filename_queue)
-    distorted_image = tf.cast(read_input.uint8image, tf.float32)
-
-    # height = IMAGE_HEIGHT
-    # width = IMAGE_WIDTH
+    reshaped_image = tf.cast(read_input.uint8image, tf.float32)
 
     # Image processing for training the network. Note the many random distortions applied to the image.
 
-    # Randomly crop a [height, width] section of the image.
-    # distorted_image = tf.random_crop(reshaped_image, [height, width, 3])
+    # Pad and randomly crop a width section of the image.
+    reshaped_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, IMG_SIZE, int(IMG_SIZE * 1.2))
+    distorted_image = tf.random_crop(reshaped_image, [IMG_SIZE, IMG_SIZE, 3])
 
     def rand_bright(img):
         """
@@ -312,10 +314,10 @@ def inputs(eval_data, data_dir, batch_size):
       labels: Labels. 1D tensor of [batch_size] size.
     """
     if not eval_data:
-        filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_BATCH_FILES)]
+        filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_TRAIN_BATCH_FILES)]
         num_examples_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
     else:
-        filenames = [os.path.join(data_dir, 'val_batch_1.bin')]
+        filenames = [os.path.join(data_dir, 'val_batch_%d.bin' % i) for i in xrange(1, NO_VAL_BATCH_FILES)]
         num_examples_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
     for f in filenames:
@@ -329,15 +331,12 @@ def inputs(eval_data, data_dir, batch_size):
     read_input = read_DDDM_img(filename_queue)
     reshaped_image = tf.cast(read_input.uint8image, tf.float32)
 
-    # height = IMAGE_SIZE
-    # width = IMAGE_SIZE
-
     # Image processing for evaluation.
-    # Crop the central [height, width] of the image.
-    # resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, width, height)
+    # Pad the height of the image to make it square.
+    resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, IMG_SIZE, IMG_SIZE)
 
     # Subtract off the mean and divide by the variance of the pixels.
-    float_image = tf.image.per_image_whitening(reshaped_image)
+    float_image = tf.image.per_image_whitening(resized_image)
 
     # Ensure that the random shuffling has good mixing properties.
     min_fraction_of_examples_in_queue = 0.4
