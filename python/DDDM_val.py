@@ -21,11 +21,11 @@ tf.app.flags.DEFINE_string('eval_dir', '/tmp/DDDM_eval', """Directory where to w
 tf.app.flags.DEFINE_string('eval_data', 'test', """Either 'test' or 'train_eval'.""")
 tf.app.flags.DEFINE_string('checkpoint_dir', '/tmp/DDDM_train', """Directory where to read model checkpoints.""")
 tf.app.flags.DEFINE_integer('eval_interval_secs', 60 * 5, """How often to run the eval.""")
-tf.app.flags.DEFINE_integer('num_examples', 2000, """Number of examples to run.""")
+tf.app.flags.DEFINE_integer('num_examples', DDDM.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL, """Number of examples to run.""")
 tf.app.flags.DEFINE_boolean('run_once', True, """Whether to run eval only once.""")
 
 
-def eval_once(saver, summary_writer, top_k_op, summary_op):
+def eval_once(saver, summary_writer, logits, labels, top_k_op, summary_op):
     """
     Run Eval once.
 
@@ -58,13 +58,24 @@ def eval_once(saver, summary_writer, top_k_op, summary_op):
             true_count = 0  # Counts the number of correct predictions.
             total_sample_count = num_iter * FLAGS.batch_size
             step = 0
+
+            log_loss = 0.0
+            sm_log_loss = 0.0
             while step < num_iter and not coord.should_stop():
-                predictions = sess.run([top_k_op])
+                probs, labels_, predictions = sess.run([tf.nn.softmax(logits), labels, top_k_op])
+
+                smooth_probs = (probs + 1) / (1 + DDDM.NUM_CLASSES)
+                for i in range(FLAGS.batch_size):
+                    log_loss -= math.log(probs[i][labels_[i]])
+                    sm_log_loss -= math.log(smooth_probs[i][labels_[i]])
                 true_count += np.sum(predictions)
                 step += 1
 
             # Compute precision @ 1.
             precision = true_count / total_sample_count
+            log_loss /= total_sample_count
+            sm_log_loss /= total_sample_count
+            print("log_loss", log_loss, "sm_log_loss", sm_log_loss)
             print('%s: precision @ 1 = %.3f' % (datetime.now(), precision))
 
             summary = tf.Summary()
@@ -102,7 +113,7 @@ def evaluate():
         summary_writer = tf.train.SummaryWriter(FLAGS.eval_dir, g)
 
         while True:
-            eval_once(saver, summary_writer, top_k_op, summary_op)
+            eval_once(saver, summary_writer, logits, labels, top_k_op, summary_op)
             if FLAGS.run_once:
                 break
             time.sleep(FLAGS.eval_interval_secs)
