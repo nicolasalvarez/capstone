@@ -57,7 +57,10 @@ def evaluate():
     uint8image = tf.reshape(tf.slice(tf.decode_raw(value, tf.uint8), [img_name_bytes], [image_bytes]),
                             [DDDM.HEIGHT, DDDM.WIDTH, DDDM.DEPTH])
     reshaped_image = tf.cast(uint8image, tf.float32)
-    images = tf.image.per_image_whitening(reshaped_image)
+
+    resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, DDDM.IMG_SIZE, DDDM.IMG_SIZE)
+
+    images = tf.image.per_image_whitening(resized_image)
 
     images, names = tf.train.batch([images, img_name], batch_size=FLAGS.batch_size, capacity=FLAGS.batch_size*10)
 
@@ -103,6 +106,9 @@ def evaluate():
 
             # Create dataframe with images probabilities
             df_val = pd.DataFrame(prob_batch, columns=['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9'])
+
+            # Make additive smoothing, also called Laplace smoothing
+            df_val = (df_val + 1) / (1+DDDM.NUM_CLASSES)
 
             # Reassembly images file names
             names_batch = ['img_'+str(img_no)+'.jpg' for img_no in names_batch]
