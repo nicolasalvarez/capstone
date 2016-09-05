@@ -34,7 +34,7 @@ FLAGS = tf.app.flags.FLAGS
 # Basic model parameters.
 tf.app.flags.DEFINE_integer('batch_size', 128, """Number of images to process in a batch.""")
 tf.app.flags.DEFINE_string('data_dir', '/media/nalvarez/Data/State_Farm_Distracted_Driver_Detection', """Path to
-the SVHN data directory.""")
+the DDDM data directory.""")
 tf.app.flags.DEFINE_string('batch_dir', 'data_batch_files', """Batch datasets directory name.""")
 
 # Global constants describing the DDDM data set.
@@ -63,7 +63,8 @@ TOWER_NAME = 'tower'
 
 
 def _activation_summary(x):
-    """Helper to create summaries for activations.
+    """
+    Helper to create summaries for activations.
 
     Creates a summary that provides a histogram of activations.
     Creates a summary that measures the sparsity of activations.
@@ -81,7 +82,8 @@ def _activation_summary(x):
 
 
 def _variable_on_cpu(name, shape, initializer):
-    """Helper to create a Variable stored on CPU memory.
+    """
+    Helper to create a Variable stored on CPU memory.
 
     Args:
       name: name of the variable
@@ -98,7 +100,8 @@ def _variable_on_cpu(name, shape, initializer):
 
 
 def _variable_with_weight_decay(name, shape, stddev, wd):
-    """Helper to create an initialized Variable with weight decay.
+    """
+    Helper to create an initialized Variable with weight decay.
 
     Note that the Variable is initialized with a truncated normal distribution.
     A weight decay is added only if one is specified.
@@ -122,7 +125,8 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
 
 
 def distorted_inputs():
-    """Construct distorted input for DDDM training using the Reader ops.
+    """
+    Construct distorted input for DDDM training using the Reader ops.
 
     Returns:
       images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
@@ -139,7 +143,8 @@ def distorted_inputs():
 
 
 def inputs(eval_data):
-    """Construct input for DDDM evaluation using the Reader ops.
+    """
+    Construct input for DDDM evaluation using the Reader ops.
 
     Args:
       eval_data: bool, indicating if one should use the train or eval data set.
@@ -159,7 +164,8 @@ def inputs(eval_data):
 
 
 def inference(images):
-    """Build the DDDM model.
+    """
+    Build the DDDM model.
 
     Args:
       images: Images returned from distorted_inputs() or inputs().
@@ -183,22 +189,18 @@ def inference(images):
 
     # pool1
     pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool1')
-    # norm1
-    norm1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75, name='norm1')
 
     # conv2
     with tf.variable_scope('conv2') as scope:
         kernel = _variable_with_weight_decay('weights', shape=[5, 5, 64, 64], stddev=5e-2, wd=0.0)
-        conv = tf.nn.conv2d(norm1, kernel, [1, 1, 1, 1], padding='SAME')
+        conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
         biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.1))
         bias = tf.nn.bias_add(conv, biases)
         conv2 = tf.nn.relu(bias, name=scope.name)
         _activation_summary(conv2)
 
-    # norm2
-    norm2 = tf.nn.lrn(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75, name='norm2')
     # pool2
-    pool2 = tf.nn.max_pool(norm2, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool2')
+    pool2 = tf.nn.max_pool(conv2, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool2')
 
     # local3
     with tf.variable_scope('local3') as scope:
@@ -228,7 +230,8 @@ def inference(images):
 
 
 def loss(logits, labels):
-    """Add L2Loss to all the trainable variables.
+    """
+    Add L2Loss to all the trainable variables.
 
     Add summary for "Loss" and "Loss/avg".
     Args:
@@ -250,7 +253,8 @@ def loss(logits, labels):
 
 
 def _add_loss_summaries(total_loss):
-    """Add summaries for losses in DDDM model.
+    """
+    Add summaries for losses in DDDM model.
 
     Generates moving average for all losses and associated summaries for
     visualizing the performance of the network.
