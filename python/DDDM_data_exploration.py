@@ -10,7 +10,7 @@ from __future__ import print_function
 
 import os
 import pandas as pd
-import DDDM
+from python import DDDM
 import matplotlib.pyplot as plt
 plt.style.use('ggplot')
 
