@@ -15,16 +15,20 @@ import numpy as np
 import tensorflow as tf
 from six.moves import xrange
 from python import DDDM
+from python import DDDM_val
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', '/tmp/DDDM_train', """Directory where to write event logs and checkpoint.""")
+tf.app.flags.DEFINE_string('train_dir', os.path.join(FLAGS.data_dir, 'DDDM_train'),
+                           """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 20000, """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
 
 
 def train():
-    """Train DDDM for a number of max_steps steps."""
+    """
+    Train DDDM for a number of max_steps steps.
+    """
     with tf.Graph().as_default():
         global_step = tf.Variable(0, trainable=False)
 
@@ -32,7 +36,7 @@ def train():
         images, labels = DDDM.distorted_inputs()
 
         # Build a Graph that computes the logits predictions from the inference model.
-        logits = DDDM.inference(images)
+        logits = DDDM.inference(images, dropout_prob=tf.constant(0.5))
 
         # Calculate loss.
         loss = DDDM.loss(logits, labels)
@@ -81,6 +85,7 @@ def train():
             if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
                 checkpoint_path = os.path.join(FLAGS.train_dir, 'model.ckpt')
                 saver.save(sess, checkpoint_path, global_step=step)
+                DDDM_val.evaluate()
 
 
 def main(argv=None):
