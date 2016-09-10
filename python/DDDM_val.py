@@ -10,6 +10,7 @@ from __future__ import print_function
 
 import math
 import time
+import os
 from datetime import datetime
 import numpy as np
 import tensorflow as tf
@@ -17,9 +18,11 @@ from python import DDDM
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('eval_dir', '/tmp/DDDM_eval', """Directory where to write event logs.""")
+tf.app.flags.DEFINE_string('eval_dir', os.path.join(FLAGS.data_dir, 'DDDM_eval'),
+                           """Directory where to write event logs.""")
 tf.app.flags.DEFINE_string('eval_data', 'test', """Either 'test' or 'train_eval'.""")
-tf.app.flags.DEFINE_string('checkpoint_dir', '/tmp/DDDM_train', """Directory where to read model checkpoints.""")
+tf.app.flags.DEFINE_string('checkpoint_dir', os.path.join(FLAGS.data_dir, 'DDDM_train'),
+                           """Directory where to read model checkpoints.""")
 tf.app.flags.DEFINE_integer('eval_interval_secs', 60 * 5, """How often to run the eval.""")
 tf.app.flags.DEFINE_integer('num_examples', DDDM.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL, """Number of examples to run.""")
 tf.app.flags.DEFINE_boolean('run_once', True, """Whether to run eval only once.""")
@@ -64,6 +67,7 @@ def eval_once(saver, summary_writer, logits, labels, top_k_op, summary_op):
             while step < num_iter and not coord.should_stop():
                 probs, labels_, predictions = sess.run([tf.nn.softmax(logits), labels, top_k_op])
 
+                # Compute  multi-class logarithmic loss with and without laplace smoothing.
                 smooth_probs = (probs + 1) / (1 + DDDM.NUM_CLASSES)
                 for i in range(FLAGS.batch_size):
                     log_loss -= math.log(probs[i][labels_[i]])
@@ -97,7 +101,7 @@ def evaluate():
         images, labels = DDDM.inputs(eval_data=eval_data)
 
         # Build a Graph that computes the logits predictions from the inference model.
-        logits = DDDM.inference(images)
+        logits = DDDM.inference(images, dropout_prob=tf.constant(1.0))
 
         # Calculate predictions.
         top_k_op = tf.nn.in_top_k(logits, labels, 1)
