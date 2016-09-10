@@ -22,23 +22,20 @@ ORIG_WIDTH = 640
 ORIG_HEIGHT = 480
 
 # The input layer (that contains the image) should be divisible by 2 many times. Common numbers include 32, 64, 96, ...
-# Possible (HEIGHT, WIDTH): (48, 64) or (72, 96)
+# Possible (HEIGHT, WIDTH): (24, 32) or (48, 64) or (72, 96)
 HEIGHT = 48
 WIDTH = 64
 IMG_SIZE = WIDTH  # Final images must be squares.
 DEPTH = 3
 
-# Fraction of dataset for validation
-VAL_SET_FRACTION = 0.2
-
 # Global constants describing the DDDM data set.
 NUM_CLASSES = 10
 TOTAL_EXAMPLES = 22423
-NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = int(TOTAL_EXAMPLES * VAL_SET_FRACTION)
-NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = TOTAL_EXAMPLES - NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
+NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 17778    # From 20 drivers
+NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 4646      # From 6 drivers
 NUM_EXAMPLES_FOR_TEST = 79726
-NO_TRAIN_BATCH_FILES = 6
-NO_VAL_BATCH_FILES = 2
+NO_TRAIN_BATCH_FILES = 6  #2-6
+NO_VAL_BATCH_FILES = 2  #1-2
 
 
 def resize_img(img_path, width, height):
@@ -55,6 +52,40 @@ def resize_img(img_path, width, height):
     if img.size != (ORIG_WIDTH, ORIG_HEIGHT):
         raise ValueError('InvalidImageSize')
     return img.resize((width, height), resample=Image.BICUBIC)
+
+
+def _save_bin_file(data_dir, batch_directory, base_name, examples_df):
+    """
+    Save dataframe to binary file.
+    :param data_dir: Path to the DDDM data directory.
+    :param batch_directory: Batch datasets directory name.
+    :param base_name: File base name
+    :param examples_df: Dataframe to be saved in binary file
+    :return: None
+    """
+
+    # Maximum batch file size in MB.
+    batch_file_size = 30
+    file_idx = 1
+
+    batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
+
+    for img_idx, row in examples_df.iterrows():
+        # Resize image
+        try:
+            img = resize_img(os.path.join(data_dir, 'imgs/train/' + row['classname'] + '/' + row['img']), WIDTH, HEIGHT)
+        except ValueError as x:
+            print(x, row['classname'] + '/' + row['img'])
+            raise
+
+        if os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
+            batch_f.close()
+            file_idx += 1
+            batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
+        # Write image label and image
+        batch_f.write(np.array(int(row['classname'][-1]), dtype=np.uint8).tobytes())
+        batch_f.write(np.array(img).flatten().tobytes())
+    batch_f.close()
 
 
 def convert_dataset(data_dir, batch_dir):
@@ -77,49 +108,35 @@ def convert_dataset(data_dir, batch_dir):
     :return: None
     """
 
-    # Maximum batch file size in MB.
-    batch_file_size = 30
-
-    batch_directory = os.path.join(data_dir, batch_dir)
-    file_idx = 1
-    base_name = 'data'
-    batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
-
     # Convert original images to binary batch files
     print('Converting training and validation datasets to binary files.')
 
-    # Shuffle dataset before convert it to binary file
-    train_df = pd.read_csv(os.path.join(data_dir, 'driver_imgs_list.csv'))
-    train_df = sklearn.utils.shuffle(train_df).reset_index()
-    for img_idx, row in train_df.iterrows():
-        # Resize image
-        try:
-            img = resize_img(os.path.join(data_dir, 'imgs/train/' + row['classname'] + '/' + row['img']), WIDTH, HEIGHT)
-        except ValueError as x:
-            print(x, row['classname'] + '/' + row['img'])
-            continue
+    batch_directory = os.path.join(data_dir, batch_dir)
+    dataset_df = pd.read_csv(os.path.join(data_dir, 'driver_imgs_list.csv'))
 
-        if img_idx > len(train_df.index) * (1 - VAL_SET_FRACTION) and base_name != 'val':
-            batch_f.close()
-            file_idx = 1
-            base_name = 'val'
-            batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
-        # Save images to batch file with format <1 x label><Height*Width*Depth x pixel>
-        elif os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
-            batch_f.close()
-            file_idx += 1
-            batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
-        # Write image label and image
-        batch_f.write(np.array(int(row['classname'][-1]), dtype=np.uint8).tobytes())
-        batch_f.write(np.array(img).flatten().tobytes())
-    batch_f.close()
+    # Split dataset in training (20 drivers) and validation (6 drivers) sets
+    train_df = pd.DataFrame()
+    val_df = pd.DataFrame()
+    drivers = dataset_df.drop_duplicates(subset='subject').drop(['classname', 'img'], axis=1).reset_index(drop=True)
+
+    for i, driver in drivers.iterrows():
+        if i < 20:
+            train_df = train_df.append(dataset_df[dataset_df['subject'] == driver['subject']])
+        else:
+            val_df = val_df.append(dataset_df[dataset_df['subject'] == driver['subject']])
+    train_df = sklearn.utils.shuffle(train_df).reset_index(drop=True)
+    val_df.reset_index(drop=True, inplace=True)
+
+    # Save train and validation dataframes to bin files
+    _save_bin_file(data_dir, batch_directory, 'train', train_df)
+    _save_bin_file(data_dir, batch_directory, 'val', val_df)
     print('Done.')
 
     print('Converting testing datasets to binary files.')
     batch_f = open(os.path.join(batch_directory, 'test_batch.bin'), "wb")
     test_img_path = os.path.join(data_dir, 'imgs/test')
 
-    for img_file in sorted(os.listdir(test_img_path)):
+    for img_file in os.listdir(test_img_path):
         # Resize image
         try:
             img = resize_img(os.path.join(os.path.join(test_img_path, img_file)), WIDTH, HEIGHT)
@@ -233,7 +250,7 @@ def distorted_inputs(data_dir, batch_size):
       images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
       labels: Labels. 1D tensor of [batch_size] size.
     """
-    filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_TRAIN_BATCH_FILES)]
+    filenames = [os.path.join(data_dir, 'train_batch_%d.bin' % i) for i in xrange(1, NO_TRAIN_BATCH_FILES)]
     for f in filenames:
         if not tf.gfile.Exists(f):
             raise ValueError('Failed to find file: ' + f)
@@ -314,10 +331,10 @@ def inputs(eval_data, data_dir, batch_size):
       labels: Labels. 1D tensor of [batch_size] size.
     """
     if not eval_data:
-        filenames = [os.path.join(data_dir, 'data_batch_%d.bin' % i) for i in xrange(1, NO_TRAIN_BATCH_FILES)]
+        filenames = [os.path.join(data_dir, 'train_batch_%d.bin' % i) for i in range(1, NO_TRAIN_BATCH_FILES + 1)]
         num_examples_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
     else:
-        filenames = [os.path.join(data_dir, 'val_batch_%d.bin' % i) for i in xrange(1, NO_VAL_BATCH_FILES)]
+        filenames = [os.path.join(data_dir, 'val_batch_%d.bin' % i) for i in range(1, NO_VAL_BATCH_FILES + 1)]
         num_examples_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
     for f in filenames:
