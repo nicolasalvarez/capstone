@@ -24,10 +24,9 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-import re
-import sys
 import tensorflow as tf
 from python import DDDM_input
+from math import sqrt
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -52,14 +51,9 @@ DATASET_FILES = ['imgs.zip', 'driver_imgs_list.csv.zip']
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999       # The decay to use for the moving average.
-NUM_EPOCHS_PER_DECAY = 50           # Epochs after which learning rate decays.
+NUM_EPOCHS_PER_DECAY = 10           # Epochs after which learning rate decays.
 LEARNING_RATE_DECAY_FACTOR = 0.5    # Learning rate decay factor.
 INITIAL_LEARNING_RATE = 0.1         # Initial learning rate.
-
-# If a model is trained with multiple GPUs, prefix all Op names with tower_name
-# to differentiate the operations. Note that this prefix is removed from the
-# names of the summaries when visualizing a model.
-TOWER_NAME = 'tower'
 
 
 def _activation_summary(x):
@@ -74,54 +68,8 @@ def _activation_summary(x):
     Returns:
       nothing
     """
-    # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
-    # session. This helps the clarity of presentation on tensorboard.
-    tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
-    tf.histogram_summary(tensor_name + '/activations', x)
-    tf.scalar_summary(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
-
-
-def _variable_on_cpu(name, shape, initializer):
-    """
-    Helper to create a Variable stored on CPU memory.
-
-    Args:
-      name: name of the variable
-      shape: list of ints
-      initializer: initializer for Variable
-
-    Returns:
-      Variable Tensor
-    """
-    with tf.device('/cpu:0'):
-        dtype = tf.float32
-        var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
-    return var
-
-
-def _variable_with_weight_decay(name, shape, stddev, wd):
-    """
-    Helper to create an initialized Variable with weight decay.
-
-    Note that the Variable is initialized with a truncated normal distribution.
-    A weight decay is added only if one is specified.
-
-    Args:
-      name: name of the variable
-      shape: list of ints
-      stddev: standard deviation of a truncated Gaussian
-      wd: add L2Loss weight decay multiplied by this float. If None, weight
-          decay is not added for this Variable.
-
-    Returns:
-      Variable Tensor
-    """
-    dtype = tf.float32
-    var = _variable_on_cpu(name, shape, tf.truncated_normal_initializer(stddev=stddev, dtype=dtype))
-    if wd is not None:
-        weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
-        tf.add_to_collection('losses', weight_decay)
-    return var
+    tf.histogram_summary(x.op.name + '/activations', x)
+    tf.scalar_summary(x.op.name + '/sparsity', tf.nn.zero_fraction(x))
 
 
 def distorted_inputs():
@@ -163,67 +111,103 @@ def inputs(eval_data):
     return images, labels
 
 
-def inference(images):
+def inference(images, dropout_prob):
     """
-    Build the DDDM model.
+    Build the DDDM model: INPUT -> [CONV -> RELU -> CONV -> RELU -> POOL]*2 -> [FC ->RELU]*2 -> FC
 
     Args:
       images: Images returned from distorted_inputs() or inputs().
+      dropout_prob: dropout probability
 
     Returns:
       Logits.
     """
-    # We instantiate all variables using tf.get_variable() instead of
-    # tf.Variable() in order to share variables across multiple GPU training runs.
-    # If we only ran this model on a single GPU, we could simplify this function
-    # by replacing all instances of tf.get_variable() with tf.Variable().
-    #
     # conv1
+    conv1_filters = 32
+    conv1_filter_size = 5
     with tf.variable_scope('conv1') as scope:
-        kernel = _variable_with_weight_decay('weights', shape=[5, 5, 3, 64], stddev=5e-2, wd=0.0)
+        kernel = tf.Variable(tf.truncated_normal([conv1_filter_size, conv1_filter_size, DEPTH, conv1_filters],
+                                                 stddev=1.0/sqrt(float(conv1_filter_size ** 2 * DEPTH))),
+                             name='weights')
         conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
-        biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.0))
+        biases = tf.Variable(tf.constant(0.0, shape=[conv1_filters]), name='biases')
         bias = tf.nn.bias_add(conv, biases)
         conv1 = tf.nn.relu(bias, name=scope.name)
         _activation_summary(conv1)
 
-    # pool1
-    pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool1')
-
     # conv2
+    conv2_filters = 32
+    conv2_filter_size = 5
     with tf.variable_scope('conv2') as scope:
-        kernel = _variable_with_weight_decay('weights', shape=[5, 5, 64, 64], stddev=5e-2, wd=0.0)
-        conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
-        biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.1))
+        kernel = tf.Variable(tf.truncated_normal([conv2_filter_size, conv2_filter_size, conv1_filters, conv2_filters],
+                                                 stddev=1.0/sqrt(float(conv2_filter_size ** 2 * conv1_filters))),
+                             name='weights')
+        conv = tf.nn.conv2d(conv1, kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tf.Variable(tf.constant(0.0, shape=[conv2_filters]), name='biases')
         bias = tf.nn.bias_add(conv, biases)
         conv2 = tf.nn.relu(bias, name=scope.name)
         _activation_summary(conv2)
 
-    # pool2
-    pool2 = tf.nn.max_pool(conv2, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool2')
+    # pool1 64x64 -> 32X32
+    pool1 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool1')
 
-    # local3
-    with tf.variable_scope('local3') as scope:
+    # conv3
+    conv3_filters = 32
+    conv3_filter_size = 5
+    with tf.variable_scope('conv3') as scope:
+        kernel = tf.Variable(tf.truncated_normal([conv3_filter_size, conv3_filter_size, conv2_filters, conv3_filters],
+                                                 stddev=1.0/sqrt(float(conv3_filter_size ** 2 * conv2_filters))),
+                             name='weights')
+        conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tf.Variable(tf.constant(0.0, shape=[conv3_filters]), name='biases')
+        bias = tf.nn.bias_add(conv, biases)
+        conv3 = tf.nn.relu(bias, name=scope.name)
+        _activation_summary(conv3)
+
+    # conv4
+    conv4_filters = 32
+    conv4_filter_size = 5
+    with tf.variable_scope('conv4') as scope:
+        kernel = tf.Variable(tf.truncated_normal([conv4_filter_size, conv4_filter_size, conv3_filters, conv4_filters],
+                                                 stddev=1.0/sqrt(float(conv4_filter_size ** 2 * conv3_filters))),
+                             name='weights')
+        conv = tf.nn.conv2d(conv3, kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tf.Variable(tf.constant(0.0, shape=[conv4_filters]), name='biases')
+        bias = tf.nn.bias_add(conv, biases)
+        conv4 = tf.nn.relu(bias, name=scope.name)
+        _activation_summary(conv4)
+
+    # pool2 32X32 -> 16x16
+    pool2 = tf.nn.max_pool(conv4, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool2')
+
+    # FC1
+    fc1_neurons = 192#384
+    with tf.variable_scope('FC1') as scope:
         # Move everything into depth so we can perform a single matrix multiply.
         reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
         dim = reshape.get_shape()[1].value
-        weights = _variable_with_weight_decay('weights', shape=[dim, 384], stddev=0.04, wd=0.004)
-        biases = _variable_on_cpu('biases', [384], tf.constant_initializer(0.1))
-        local3 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
-        _activation_summary(local3)
+        weights = tf.Variable(tf.truncated_normal([dim, fc1_neurons], stddev=1.0/sqrt(float(dim))), name='weights')
+        biases = tf.Variable(tf.constant(0.0, shape=[fc1_neurons]), name='biases')
+        fc1 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
+        fc1 = tf.nn.dropout(fc1, dropout_prob)
+        _activation_summary(fc1)
 
-    # local4
-    with tf.variable_scope('local4') as scope:
-        weights = _variable_with_weight_decay('weights', shape=[384, 192], stddev=0.04, wd=0.004)
-        biases = _variable_on_cpu('biases', [192], tf.constant_initializer(0.1))
-        local4 = tf.nn.relu(tf.matmul(local3, weights) + biases, name=scope.name)
-        _activation_summary(local4)
+    # FC2
+    fc2_neurons = 96#192
+    with tf.variable_scope('FC2') as scope:
+        weights = tf.Variable(tf.truncated_normal([fc1_neurons, fc2_neurons], stddev=1.0/sqrt(float(fc1_neurons))),
+                              name='weights')
+        biases = tf.Variable(tf.constant(0.0, shape=[fc2_neurons]), name='biases')
+        fc2 = tf.nn.relu(tf.matmul(fc1, weights) + biases, name=scope.name)
+        fc2 = tf.nn.dropout(fc2, dropout_prob)
+        _activation_summary(fc2)
 
     # softmax, i.e. softmax(WX + b)
     with tf.variable_scope('softmax_linear') as scope:
-        weights = _variable_with_weight_decay('weights', [192, NUM_CLASSES], stddev=1/192.0, wd=0.0)
-        biases = _variable_on_cpu('biases', [NUM_CLASSES], tf.constant_initializer(0.0))
-        softmax_linear = tf.add(tf.matmul(local4, weights), biases, name=scope.name)
+        weights = tf.Variable(tf.truncated_normal([fc2_neurons, NUM_CLASSES], stddev=1.0/sqrt(float(fc2_neurons))),
+                              name='weights')
+        biases = tf.Variable(tf.constant(0.0, shape=[NUM_CLASSES]), name='biases')
+        softmax_linear = tf.add(tf.matmul(fc2, weights), biases, name=scope.name)
         _activation_summary(softmax_linear)
 
     return softmax_linear
@@ -280,7 +264,8 @@ def _add_loss_summaries(total_loss):
 
 
 def train(total_loss, global_step):
-    """Train DDDM model.
+    """
+    Train DDDM model.
 
     Create an optimizer and apply to all trainable variables. Add moving
     average for all trainable variables.
@@ -332,8 +317,10 @@ def train(total_loss, global_step):
 
 
 def check_and_maybe_convert_dataset():
-    """Check if dataset files are present at directory "data_dir" and convert original dataset to binary if directory
-    "batch_dir" does not exist."""
+    """
+    Check if dataset files are present at directory "data_dir" and convert original dataset to binary if directory
+    "batch_dir" does not exist.
+    """
     dest_directory = FLAGS.data_dir
     if not os.path.exists(dest_directory):
         os.makedirs(dest_directory)
