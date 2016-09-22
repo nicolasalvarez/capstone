@@ -100,7 +100,7 @@ def test_imgs_inference():
             # Print progress
             img_count += 1
             if img_count % 1000 == 0 or img_count == FLAGS.num_examples:
-                print ("%d/%d images predicted.", img_count, FLAGS.num_examples)
+                print ("%d/%d images predicted." % (img_count, FLAGS.num_examples))
 
             # Save predictions to file
             predictions.tofile(subm_f, sep=",", format="%.5f")
