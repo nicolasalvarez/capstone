@@ -15,7 +15,7 @@ import pandas as pd
 import sklearn.utils
 import random
 from six.moves import xrange
-from PIL import Image
+from PIL import Image, ImageFilter
 
 # Original image size
 ORIG_WIDTH = 640
@@ -31,39 +31,38 @@ DEPTH = 3
 # Global constants describing the DDDM data set.
 NUM_CLASSES = 10
 TOTAL_EXAMPLES = 22423
-NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 17778    # From 20 drivers
+NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 17778 * 6    # From 20 drivers
 NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 4646      # From 6 drivers
 NUM_EXAMPLES_FOR_TEST = 79726
-NO_TRAIN_BATCH_FILES = 6  #2-6
-NO_VAL_BATCH_FILES = 2  #1-2
+NO_TRAIN_BATCH_FILES = 32
+NO_VAL_BATCH_FILES = 2
 
 
-def resize_img(img_path, width, height):
+def _resize_img(img, width, height):
     """
     Resize image to new_width and new_height using Bicubic algorithm.
-    :param img_path: path to the image to resize
+    :param img: PIL image
     :param width: width
     :param height: height
     :raise InvalidImageSize if image size is not equal to (ORIG_WIDTH, ORIG_HEIGHT)
     :return: image resized
     """
-    img = Image.open(img_path)
     # Resize original images. Discard images with wrong size.
     if img.size != (ORIG_WIDTH, ORIG_HEIGHT):
         raise ValueError('InvalidImageSize')
     return img.resize((width, height), resample=Image.BICUBIC)
 
 
-def _save_bin_file(data_dir, batch_directory, base_name, examples_df):
+def _save_bin_file(data_dir, batch_directory, base_name, examples_df, dist=False):
     """
     Save dataframe to binary file.
     :param data_dir: Path to the DDDM data directory.
     :param batch_directory: Batch datasets directory name.
     :param base_name: File base name
     :param examples_df: Dataframe to be saved in binary file
+    :param dist: If True, applies distortions to images
     :return: None
     """
-
     # Maximum batch file size in MB.
     batch_file_size = 30
     file_idx = 1
@@ -72,23 +71,36 @@ def _save_bin_file(data_dir, batch_directory, base_name, examples_df):
 
     for img_idx, row in examples_df.iterrows():
         # Resize image
-        try:
-            img = resize_img(os.path.join(data_dir, 'imgs/train/' + row['classname'] + '/' + row['img']), WIDTH, HEIGHT)
-        except ValueError as x:
-            print(x, row['classname'] + '/' + row['img'])
-            raise
+        raw_img = Image.open(os.path.join(data_dir, 'imgs/train/' + row['classname'] + '/' + row['img']))
+        images = [raw_img]
 
-        if os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
-            batch_f.close()
-            file_idx += 1
-            batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
-        # Write image label and image
-        batch_f.write(np.array(int(row['classname'][-1]), dtype=np.uint8).tobytes())
-        batch_f.write(np.array(img).flatten().tobytes())
+        # Apply distortions if dist=True
+        if dist:
+            gb_img = raw_img.filter(ImageFilter.GaussianBlur(radius=30))  # 20-40
+            um_img = raw_img.filter(ImageFilter.UnsharpMask(radius=400, percent=70, threshold=3))
+            medf_img = raw_img.filter(ImageFilter.MedianFilter(size=3))
+            minf_img = raw_img.filter(ImageFilter.MinFilter(size=3))
+            maxf_img = raw_img.filter(ImageFilter.MaxFilter(size=3))
+            images += [gb_img, um_img, medf_img, minf_img, maxf_img]
+
+        for image in images:
+            try:
+                img = _resize_img(image, WIDTH, HEIGHT)
+            except ValueError as x:
+                print(x, row['classname'] + '/' + row['img'])
+                raise
+
+            if os.path.getsize(batch_f.name) > batch_file_size * (1024 ** 2):
+                batch_f.close()
+                file_idx += 1
+                batch_f = open(os.path.join(batch_directory, base_name + '_batch_%d.bin' % file_idx), "wb")
+            # Write image label and image
+            batch_f.write(np.array(int(row['classname'][-1]), dtype=np.uint8).tobytes())
+            batch_f.write(np.array(img).flatten().tobytes())
     batch_f.close()
 
 
-def convert_dataset(data_dir, batch_dir):
+def _convert_dataset(data_dir, batch_dir):
     """
     Converts the dataset from original files to binary files called data_batch_1.bin, data_batch_2.bin, ...,
     as well as val_batch.bin. Binary files are written in "data_dir/batch_dir" directory.
@@ -107,7 +119,6 @@ def convert_dataset(data_dir, batch_dir):
     :param batch_dir: Batch data directory name.
     :return: None
     """
-
     # Convert original images to binary batch files
     print('Converting training and validation datasets to binary files.')
 
@@ -128,7 +139,7 @@ def convert_dataset(data_dir, batch_dir):
     val_df.reset_index(drop=True, inplace=True)
 
     # Save train and validation dataframes to bin files
-    _save_bin_file(data_dir, batch_directory, 'train', train_df)
+    _save_bin_file(data_dir, batch_directory, 'train', train_df, dist=True)
     _save_bin_file(data_dir, batch_directory, 'val', val_df)
     print('Done.')
 
@@ -138,8 +149,9 @@ def convert_dataset(data_dir, batch_dir):
 
     for img_file in os.listdir(test_img_path):
         # Resize image
+        raw_img = Image.open(os.path.join(os.path.join(test_img_path, img_file)))
         try:
-            img = resize_img(os.path.join(os.path.join(test_img_path, img_file)), WIDTH, HEIGHT)
+            img = _resize_img(raw_img, WIDTH, HEIGHT)
         except ValueError as x:
             print(x, img_file)
             continue
@@ -150,7 +162,7 @@ def convert_dataset(data_dir, batch_dir):
     print('Done.')
 
 
-def read_DDDM_img(filename_queue):
+def _read_DDDM_img(filename_queue):
     """Reads and parses examples from DDDM data files.
 
     Args:
@@ -172,6 +184,7 @@ def read_DDDM_img(filename_queue):
         uint8image: a [height, width, depth] uint8 Tensor with the image data
         """
         pass
+
     result = DDDMRecord()
 
     # Dimensions of the images in the DDDM dataset.
@@ -259,7 +272,7 @@ def distorted_inputs(data_dir, batch_size):
     filename_queue = tf.train.string_input_producer(filenames)
 
     # Read examples from files in the filename queue.
-    read_input = read_DDDM_img(filename_queue)
+    read_input = _read_DDDM_img(filename_queue)
     reshaped_image = tf.cast(read_input.uint8image, tf.float32)
 
     # Image processing for training the network. Note the many random distortions applied to the image.
@@ -310,7 +323,7 @@ def distorted_inputs(data_dir, batch_size):
     float_image = tf.image.per_image_whitening(distorted_image)
 
     # Ensure that the random shuffling has good mixing properties.
-    min_fraction_of_examples_in_queue = 0.4
+    min_fraction_of_examples_in_queue = 0.1
     min_queue_examples = int(NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN * min_fraction_of_examples_in_queue)
     print ('Filling queue with %d DDDM images before starting to train.' % min_queue_examples)
 
@@ -345,7 +358,7 @@ def inputs(eval_data, data_dir, batch_size):
     filename_queue = tf.train.string_input_producer(filenames)
 
     # Read examples from files in the filename queue.
-    read_input = read_DDDM_img(filename_queue)
+    read_input = _read_DDDM_img(filename_queue)
     reshaped_image = tf.cast(read_input.uint8image, tf.float32)
 
     # Image processing for evaluation.
