@@ -38,6 +38,7 @@ import tensorflow as tf
 import DDDM
 import os
 import numpy as np
+from datetime import datetime
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -86,6 +87,7 @@ def test_imgs_inference():
 
     with tf.Session() as sess:
         img_count = 0
+
         for image_file in os.listdir(test_img_path):
 
             image_data = tf.gfile.FastGFile(os.path.join(test_img_path, image_file), 'rb').read()
@@ -100,9 +102,10 @@ def test_imgs_inference():
             # Print progress
             img_count += 1
             if img_count % 1000 == 0 or img_count == FLAGS.num_examples:
-                print ("%d/%d images predicted." % (img_count, FLAGS.num_examples))
+                print ("%s: %d/%d images predicted." % (datetime.now(), img_count, FLAGS.num_examples))
 
             # Save predictions to file
+            subm_f.write(image_file+',')
             predictions.tofile(subm_f, sep=",", format="%.5f")
             subm_f.write('\n')
         subm_f.close()
