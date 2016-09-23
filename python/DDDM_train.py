@@ -14,14 +14,14 @@ from datetime import datetime
 import numpy as np
 import tensorflow as tf
 from six.moves import xrange
-from python import DDDM
-from python import DDDM_val
+import DDDM
+import DDDM_val
 
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('train_dir', os.path.join(FLAGS.data_dir, 'DDDM_train'),
                            """Directory where to write event logs and checkpoint.""")
-tf.app.flags.DEFINE_integer('max_steps', 20000, """Number of batches to run.""")
+tf.app.flags.DEFINE_integer('max_steps', 2000, """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
 
 
