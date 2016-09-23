@@ -10,13 +10,14 @@ from __future__ import print_function
 
 import math
 import tensorflow as tf
-from python import DDDM
+import DDDM
 import os
 import pandas as pd
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('checkpoint_dir', '/tmp/DDDM_train', """Directory where to read model checkpoints.""")
+tf.app.flags.DEFINE_string('checkpoint_dir', os.path.join(FLAGS.data_dir, 'DDDM_train'),
+                           """Directory where to read model checkpoints.""")
 tf.app.flags.DEFINE_integer('num_examples', 79726, """Number of examples to run.""")
 tf.app.flags.DEFINE_string('submission_file', 'nalvarez_submission.csv', """Submission file name.""")
 
@@ -67,7 +68,7 @@ def evaluate():
     names = tf.reshape(names, [FLAGS.batch_size])
 
     # Build a Graph that computes the logits predictions from the inference model.
-    logits = DDDM.inference(images)
+    logits = DDDM.inference(images, dropout_prob=tf.constant(1.0))
     img_prob = tf.nn.softmax(logits)
 
     # Restore the moving average version of the learned variables for eval.
@@ -101,14 +102,13 @@ def evaluate():
 
         while step < num_iter and not coord.should_stop():
             print ('Running step', step+1, 'of', num_iter)
-
             names_batch, prob_batch = sess.run([names, img_prob])
 
             # Create dataframe with images probabilities
             df_val = pd.DataFrame(prob_batch, columns=['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9'])
 
             # Make additive smoothing, also called Laplace smoothing
-            df_val = (df_val + 1) / (1+DDDM.NUM_CLASSES)
+            #df_val = (df_val + 1) / (1+DDDM.NUM_CLASSES)
 
             # Reassembly images file names
             names_batch = ['img_'+str(img_no)+'.jpg' for img_no in names_batch]
