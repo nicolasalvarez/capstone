@@ -14,7 +14,7 @@ import os
 from datetime import datetime
 import numpy as np
 import tensorflow as tf
-from python import DDDM
+import DDDM
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -23,12 +23,10 @@ tf.app.flags.DEFINE_string('eval_dir', os.path.join(FLAGS.data_dir, 'DDDM_eval')
 tf.app.flags.DEFINE_string('eval_data', 'test', """Either 'test' or 'train_eval'.""")
 tf.app.flags.DEFINE_string('checkpoint_dir', os.path.join(FLAGS.data_dir, 'DDDM_train'),
                            """Directory where to read model checkpoints.""")
-tf.app.flags.DEFINE_integer('eval_interval_secs', 60 * 5, """How often to run the eval.""")
 tf.app.flags.DEFINE_integer('num_examples', DDDM.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL, """Number of examples to run.""")
-tf.app.flags.DEFINE_boolean('run_once', True, """Whether to run eval only once.""")
 
 
-def eval_once(saver, summary_writer, logits, labels, top_k_op, summary_op):
+def validate(saver, summary_writer, logits, labels, top_k_op, summary_op):
     """
     Run Eval once.
 
@@ -116,11 +114,7 @@ def evaluate():
 
         summary_writer = tf.train.SummaryWriter(FLAGS.eval_dir, g)
 
-        while True:
-            eval_once(saver, summary_writer, logits, labels, top_k_op, summary_op)
-            if FLAGS.run_once:
-                break
-            time.sleep(FLAGS.eval_interval_secs)
+        validate(saver, summary_writer, logits, labels, top_k_op, summary_op)
 
 
 def main(argv=None):
