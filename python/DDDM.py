@@ -25,7 +25,7 @@ from __future__ import print_function
 
 import os
 import tensorflow as tf
-from python import DDDM_input
+import DDDM_input
 from math import sqrt
 
 FLAGS = tf.app.flags.FLAGS
@@ -123,7 +123,7 @@ def inference(images, dropout_prob):
       Logits.
     """
     # conv1
-    conv1_filters = 32
+    conv1_filters = 64
     conv1_filter_size = 5
     with tf.variable_scope('conv1') as scope:
         kernel = tf.Variable(tf.truncated_normal([conv1_filter_size, conv1_filter_size, DEPTH, conv1_filters],
@@ -136,7 +136,7 @@ def inference(images, dropout_prob):
         _activation_summary(conv1)
 
     # conv2
-    conv2_filters = 32
+    conv2_filters = 64
     conv2_filter_size = 5
     with tf.variable_scope('conv2') as scope:
         kernel = tf.Variable(tf.truncated_normal([conv2_filter_size, conv2_filter_size, conv1_filters, conv2_filters],
@@ -152,7 +152,7 @@ def inference(images, dropout_prob):
     pool1 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool1')
 
     # conv3
-    conv3_filters = 32
+    conv3_filters = 64
     conv3_filter_size = 5
     with tf.variable_scope('conv3') as scope:
         kernel = tf.Variable(tf.truncated_normal([conv3_filter_size, conv3_filter_size, conv2_filters, conv3_filters],
@@ -165,7 +165,7 @@ def inference(images, dropout_prob):
         _activation_summary(conv3)
 
     # conv4
-    conv4_filters = 32
+    conv4_filters = 64
     conv4_filter_size = 5
     with tf.variable_scope('conv4') as scope:
         kernel = tf.Variable(tf.truncated_normal([conv4_filter_size, conv4_filter_size, conv3_filters, conv4_filters],
@@ -267,8 +267,7 @@ def train(total_loss, global_step):
     """
     Train DDDM model.
 
-    Create an optimizer and apply to all trainable variables. Add moving
-    average for all trainable variables.
+    Create an optimizer and apply to all trainable variables.
 
     Args:
       total_loss: Total loss from loss().
@@ -335,4 +334,4 @@ def check_and_maybe_convert_dataset():
     batch_directory = os.path.join(dest_directory, FLAGS.batch_dir)
     if not os.path.exists(batch_directory):
         os.makedirs(batch_directory)
-        DDDM_input.convert_dataset(dest_directory, FLAGS.batch_dir)
+        DDDM_input._convert_dataset(dest_directory, FLAGS.batch_dir)
