@@ -73,16 +73,16 @@ def validate(saver, summary_writer, logits, labels, top_k_op, summary_op):
                 true_count += np.sum(predictions)
                 step += 1
 
-            # Compute precision @ 1.
-            precision = true_count / total_sample_count
+            # Compute accuracy @ 1.
+            accuracy = true_count / total_sample_count
             log_loss /= total_sample_count
             sm_log_loss /= total_sample_count
             print("log_loss", log_loss, "sm_log_loss", sm_log_loss)
-            print('%s: precision @ 1 = %.3f' % (datetime.now(), precision))
+            print('%s: accuracy @ 1 = %.3f' % (datetime.now(), accuracy))
 
             summary = tf.Summary()
             summary.ParseFromString(sess.run(summary_op))
-            summary.value.add(tag='Precision @ 1', simple_value=precision)
+            summary.value.add(tag='Accuracy @ 1', simple_value=accuracy)
             summary_writer.add_summary(summary, global_step)
         except Exception as e:
             coord.request_stop(e)
